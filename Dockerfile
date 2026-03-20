@@ -1,16 +1,10 @@
-FROM php:8.2-apache
-
-RUN apt-get update && \
-    apt-get install -y libapache2-mod-php8.2 2>/dev/null; \
-    a2dismod mpm_event mpm_worker mpm_prefork 2>/dev/null; \
-    a2enmod mpm_prefork rewrite
+FROM php:8.2-fpm
 
 RUN docker-php-ext-install mysqli pdo pdo_mysql
 
-COPY . /var/www/html/
+RUN apt-get update && apt-get install -y nginx
 
-RUN sed -i 's|/var/www/html|/var/www/html/public|g' \
-    /etc/apache2/sites-available/000-default.conf
+COPY . /var/www/html/
 
 RUN mkdir -p /var/www/html/writable/cache \
              /var/www/html/writable/logs \
@@ -18,8 +12,26 @@ RUN mkdir -p /var/www/html/writable/cache \
              /var/www/html/writable/uploads \
     && chmod -R 777 /var/www/html/writable
 
-RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' \
-    /etc/apache2/apache2.conf
+COPY <<EOF /etc/nginx/sites-available/default
+server {
+    listen 80;
+    root /var/www/html/public;
+    index index.php index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+EOF
+
+RUN echo '#!/bin/bash\nphp-fpm -D\nnginx -g "daemon off;"' > /start.sh \
+    && chmod +x /start.sh
 
 EXPOSE 80
-CMD ["apache2-foreground"]
+CMD ["/start.sh"]
